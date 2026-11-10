@@ -404,9 +404,7 @@ function addStar() {
   starCount++;
   starEls.forEach((el, i) => el.classList.toggle('on', i < starCount));
   if (starCount >= starEls.length) {                    // 5 pops = party!
-    celebrateSound();
-    burst(new THREE.Vector3(0, 1.4, 0.3), 0xffd23f, 90, 2.6);
-    burst(new THREE.Vector3(0, 1.4, 0.3), 0xff9ec7, 60, 2.2);
+    celebrate();
     setTimeout(() => { starCount = 0; starEls.forEach((el) => el.classList.remove('on')); }, 900);
   }
 }
@@ -552,7 +550,7 @@ function hopAnimal(a, sound) { a.hop = 1; if (sound) animalSound(a.g.userData.ty
 
 let danceTimer = 0;
 function updateMeadow(dt, time) {
-  const dancing = waveE > 0.6 && sleepF < 0.3;
+  const dancing = (waveE > 0.6 && sleepF < 0.3) || partyT > 0;
   if (dancing) {
     if (danceTimer <= 0 && meadow.length) animalSound(meadow[Math.floor(Math.random() * meadow.length)].g.userData.type);
     danceTimer = 1.5;
@@ -662,6 +660,155 @@ for (let i = 0; i < 6; i++) {
 }
 
 /* ------------------------------------------------------------------ *
+ *  5-star celebrations: fireworks at night, rainbow + balloons + confetti by day
+ * ------------------------------------------------------------------ */
+let skyFlash = 0, partyT = 0;
+const flashCol = new THREE.Color(0xffffff);
+
+let noiseBuf = null;
+function noiseBurst(dur, vol, cutoff) {
+  if (!actx) return;
+  if (!noiseBuf) { noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain(), t = actx.currentTime;
+  src.buffer = noiseBuf; f.type = 'lowpass'; f.frequency.value = cutoff;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(g); g.connect(actx.destination); src.start(t); src.stop(t + dur);
+}
+function launchSound() { tone(350, 0.55, 'sine', 0.07, 0, 1400); }
+function boomSound() {
+  noiseBurst(0.7, 0.3, 500); tone(120, 0.6, 'sine', 0.25, 0, 40);
+  for (let i = 0; i < 5; i++) tone(2500 + Math.random() * 2500, 0.06, 'square', 0.02, 0.25 + i * 0.07);
+}
+
+// glowing round particles for fireworks
+const GLOW = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.35, 'rgba(255,255,255,0.6)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+const NF = 800;
+const fPos = new Float32Array(NF * 3), fCol = new Float32Array(NF * 3), fBase = new Float32Array(NF * 3), fVel = new Float32Array(NF * 3);
+const fLife = new Float32Array(NF), fMax = new Float32Array(NF);
+fPos.fill(-100);
+const fGeo = new THREE.BufferGeometry();
+fGeo.setAttribute('position', new THREE.BufferAttribute(fPos, 3));
+fGeo.setAttribute('color', new THREE.BufferAttribute(fCol, 3));
+const fwPoints = new THREE.Points(fGeo, new THREE.PointsMaterial({ size: 0.42, map: GLOW, vertexColors: true, transparent: true,
+  depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+fwPoints.frustumCulled = false; scene.add(fwPoints);
+let fNext = 0, fAlive = 0;
+function fwEmit(x, y, z, vx, vy, vz, col, life) {
+  const i = fNext; fNext = (fNext + 1) % NF;
+  fPos.set([x, y, z], i * 3); fVel.set([vx, vy, vz], i * 3); fBase.set([col.r, col.g, col.b], i * 3);
+  fLife[i] = fMax[i] = life; fAlive = 1;
+}
+
+const FW_PAL = [[0xff4d6d, 0xffd166], [0x4dc3ff, 0xffffff], [0x7dff7a, 0xffee58], [0xc77dff, 0xff9ec7], [0xffa94d, 0xff4d4d]];
+const _fc = [new THREE.Color(), new THREE.Color()];
+function explodeFirework(x, y, z) {
+  const pal = FW_PAL[Math.floor(Math.random() * FW_PAL.length)], ring = Math.random() < 0.3;
+  _fc[0].set(pal[0]); _fc[1].set(pal[1]);
+  for (let i = 0; i < 130; i++) {
+    let dx, dy, dz;
+    if (ring) { const a = (i / 130) * 6.283; dx = Math.cos(a); dy = Math.sin(a); dz = (Math.random() - 0.5) * 0.15; }
+    else { const th = Math.random() * 6.283, ph = Math.acos(2 * Math.random() - 1); dx = Math.sin(ph) * Math.cos(th); dy = Math.sin(ph) * Math.sin(th); dz = Math.cos(ph); }
+    const sp = ring ? 1.9 : 1.2 + Math.random() * 1.1;
+    fwEmit(x, y, z, dx * sp, dy * sp, dz * sp, _fc[i % 2], 1.5 + Math.random() * 0.6);
+  }
+  skyFlash = 1; flashCol.set(pal[0]); boomSound();
+}
+const rockets = [], fwQueue = [];
+const FW_Z = -8;
+function updateFireworks(dt) {
+  for (const q of [...fwQueue]) {
+    q.t -= dt;
+    if (q.t <= 0) { fwQueue.splice(fwQueue.indexOf(q), 1); rockets.push({ x: q.x, y: 0.2, ty: q.ty }); launchSound(); }
+  }
+  for (const r of [...rockets]) {
+    r.y += 6.5 * dt;
+    fwEmit(r.x + (Math.random() - 0.5) * 0.04, r.y, FW_Z, (Math.random() - 0.5) * 0.2, -0.6, 0, _fc[0].set(0xffc477), 0.45);
+    if (r.y >= r.ty) { rockets.splice(rockets.indexOf(r), 1); explodeFirework(r.x, r.y, FW_Z); }
+  }
+  skyFlash = Math.max(0, skyFlash - dt * 3.5);
+  if (!fAlive) return;
+  fAlive = 0;
+  for (let i = 0; i < NF; i++) {
+    if (fLife[i] <= 0) continue;
+    fLife[i] -= dt;
+    if (fLife[i] <= 0) { fPos[i * 3 + 1] = -100; continue; }
+    fAlive++;
+    const drag = 1 - 0.8 * dt, f = fLife[i] / fMax[i];
+    fVel[i * 3] *= drag; fVel[i * 3 + 1] = fVel[i * 3 + 1] * drag - 1.0 * dt; fVel[i * 3 + 2] *= drag;
+    for (let a = 0; a < 3; a++) { fPos[i * 3 + a] += fVel[i * 3 + a] * dt; fCol[i * 3 + a] = fBase[i * 3 + a] * f; }
+  }
+  fGeo.attributes.position.needsUpdate = true; fGeo.attributes.color.needsUpdate = true;
+}
+
+// daytime surprise: a rainbow grows over the farm, balloons float up, confetti rains and the animals party
+const RAINBOW = [0xff4d4d, 0xff9f40, 0xffe14d, 0x5bd65b, 0x4da6ff, 0x6b5bff, 0xb25bff];
+let rainbow = null;
+function startRainbow() {
+  if (rainbow) { scene.remove(rainbow.g); }
+  const halfW = (camDist + 12) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect;
+  const R = Math.min(halfW * 0.88, 4.6), g = new THREE.Group(), mats = [];
+  RAINBOW.forEach((c, i) => {
+    const mat = new THREE.MeshBasicMaterial({ color: c, transparent: true, fog: false });
+    g.add(new THREE.Mesh(new THREE.TorusGeometry(R - i * 0.17, 0.09, 6, 48, Math.PI), mat)); mats.push(mat);
+  });
+  g.position.set(0, 0, -12); g.scale.y = 0.01; scene.add(g);
+  rainbow = { g, mats, t: 0 };
+}
+const balloons = [];
+function startBalloons() {
+  for (let i = 0; i < 6; i++) {
+    const col = PASTELS[i % PASTELS.length], g = new THREE.Group();
+    g.add(part(SPH, col, 0.17, 0.21, 0.17, 0, 0, 0));
+    g.add(part(CONE, col, 0.03, 0.05, 0.03, 0, -0.22, 0, Math.PI));
+    g.add(part(CYL, 0x555555, 0.004, 0.3, 0.004, 0, -0.4, 0));
+    const x0 = -1.3 + i * 0.52 + (Math.random() - 0.5) * 0.2;
+    g.position.set(x0, 0.3, -2 + Math.random() * 1.4); scene.add(g);
+    balloons.push({ g, x0, vy: 0.8 + Math.random() * 0.5, ph: Math.random() * 6.28, t: -i * 0.15 });
+  }
+}
+let confettiT = 0;
+function updateDayFX(dt) {
+  if (rainbow) {
+    const r = rainbow; r.t += dt;
+    const k = Math.min(1, r.t / 1.2), e = 1 + 2.7 * Math.pow(k - 1, 3) + 1.7 * Math.pow(k - 1, 2);   // ease-out-back
+    r.g.scale.y = Math.max(0.01, e);
+    const op = r.t > 5 ? Math.max(0, 1 - (r.t - 5)) : 1;
+    r.mats.forEach((m) => { m.opacity = op; });
+    if (r.t > 6) { scene.remove(r.g); r.g.children.forEach((m) => { m.geometry.dispose(); m.material.dispose(); }); rainbow = null; }
+  }
+  for (const b of [...balloons]) {
+    b.t += dt; if (b.t < 0) { b.g.visible = false; continue; } b.g.visible = true;
+    b.g.position.y += b.vy * dt; b.g.position.x = b.x0 + Math.sin(b.t * 1.5 + b.ph) * 0.1;
+    b.g.rotation.z = Math.sin(b.t * 1.5 + b.ph) * 0.12;
+    if (b.g.position.y > 7) { scene.remove(b.g); balloons.splice(balloons.indexOf(b), 1); }
+  }
+  if (partyT > 0) {
+    confettiT -= dt;
+    if (confettiT <= 0) { confettiT = 0.1; burst(new THREE.Vector3((Math.random() * 2 - 1) * 1.4, 4.2, 0.5), PASTELS[Math.floor(Math.random() * PASTELS.length)], 6, 0.5); }
+    partyT = Math.max(0, partyT - dt);
+  }
+}
+
+function celebrate() {
+  celebrateSound();
+  burst(new THREE.Vector3(0, 1.4, 0.3), 0xffd23f, 60, 2.2);
+  if (cycle.nightF > 0.5) {                                   // night: fireworks light up the sky
+    const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), dist = camDist + 8;
+    const halfW = dist * tanH * camera.aspect * 0.8, top = Math.min(5.2, 0.95 + dist * tanH - 0.5), lo = 2.4;
+    [0, 0.5, 1.0, 1.5, 2.1].forEach((d) => fwQueue.push({ t: d, x: (Math.random() * 2 - 1) * halfW, ty: lo + Math.random() * Math.max(0, top - lo) }));
+  } else {                                                    // day: surprise!
+    startRainbow(); startBalloons(); partyT = 5;
+  }
+}
+function updateFX(dt) { updateFireworks(dt); updateDayFX(dt); }
+
+/* ------------------------------------------------------------------ *
  *  Day / night cycle: 60s day -> 10s sunset -> 30s night -> sunrise.
  *  Night: fireflies instead of bubbles, animals sleep, and in the last 10s waving "wakes up the sun".
  * ------------------------------------------------------------------ */
@@ -714,8 +861,9 @@ function updateCycle(dt) {
   }
   const n = c.nightF, dusk = 4 * n * (1 - n);
   _c.copy(SKY_DAY).lerp(SKY_NIGHT, n).lerp(SKY_DUSK, dusk * 0.55);
+  if (skyFlash > 0.01) _c.lerp(flashCol, skyFlash * 0.4);          // firework flash lights up the sky
   scene.background.copy(_c); scene.fog.color.copy(_c);
-  hemi.intensity = 1.5 - 1.05 * n; hemi.color.set(0xffffff).lerp(SKY_DUSK, dusk * 0.4).lerp(SKY_NIGHT.clone().multiplyScalar(4), n * 0.5);
+  hemi.intensity = 1.5 - 1.05 * n + skyFlash * 0.9; hemi.color.set(0xffffff).lerp(SKY_DUSK, dusk * 0.4).lerp(SKY_NIGHT.clone().multiplyScalar(4), n * 0.5);
   sun.intensity = 1.6 - 1.35 * n; sun.color.set(0xffffff).lerp(SKY_DUSK, dusk * 0.7).lerp(_c.set(0x9fb0ff), n);
   avatarGlow.intensity = 7 * n;
   sunDisc.position.y = 2 + 9 * c.sunH; sunDisc.material.color.copy(SUN_YELLOW).lerp(SUN_ORANGE, 1 - c.sunH);
@@ -742,6 +890,7 @@ function frame(now) {
   poseArm(rightArm, k); poseArm(leftArm, k);
   updateWave(dt);
   updateCycle(dt);
+  updateFX(dt);
   updateBubbles(dt);
   updateSparkles(dt);
   updateMeadow(dt, now / 1000);
@@ -760,7 +909,7 @@ let slowT = 0, fastT = 0;
 requestAnimationFrame(frame);
 
 // handy for debugging / future game logic
-window.__game = { scene, avatar, rightArm, leftArm, bubbles, meadow, cycle };
+window.__game = { scene, avatar, rightArm, leftArm, bubbles, meadow, cycle, celebrate };
 </script>
 </body>
 </html>
