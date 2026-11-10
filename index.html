@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#101820">
+<title>Fun4Two – Mirror Avatar</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #101820; color: #eaf2f8;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; touch-action: none; }
+  canvas#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* camera preview (mirrored) with skeleton overlay */
+  #preview { position: fixed; right: 12px; top: max(12px, env(safe-area-inset-top)); width: 28vw; max-width: 180px; min-width: 100px;
+    aspect-ratio: 3 / 4; border-radius: 12px; overflow: hidden; border: 2px solid rgba(255,255,255,.25);
+    background: #000; display: none; }
+  #preview video, #preview canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+  #status { position: fixed; left: 12px; top: max(12px, env(safe-area-inset-top)); font-size: 13px; padding: 6px 10px;
+    border-radius: 999px; background: rgba(0,0,0,.45); backdrop-filter: blur(6px); max-width: 60vw; }
+  #status.ok::before { content: "● "; color: #4ade80; }
+  #status.warn::before { content: "● "; color: #fbbf24; }
+
+  #menu { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; padding: 24px; text-align: center; background: rgba(10,16,22,.78); backdrop-filter: blur(4px); }
+  #menu h1 { margin: 0; font-size: 28px; letter-spacing: .5px; }
+  #menu p { margin: 0; max-width: 420px; line-height: 1.45; color: #b8c7d3; font-size: 15px; }
+  button { font: inherit; font-weight: 600; font-size: 17px; padding: 14px 28px; border-radius: 14px; border: 0; cursor: pointer;
+    background: #38bdf8; color: #04141f; min-width: 220px; }
+  button.secondary { background: transparent; color: #b8c7d3; border: 1px solid rgba(255,255,255,.25); font-size: 15px; padding: 10px 20px; }
+  button:disabled { opacity: .6; }
+  #err { color: #fca5a5; font-size: 14px; max-width: 420px; min-height: 1em; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="preview"><video id="video" playsinline muted autoplay></video><canvas id="overlay"></canvas></div>
+<div id="status" class="warn">Not started</div>
+
+<div id="menu">
+  <h1>Mirror Avatar</h1>
+  <p>Stand back so your head, shoulders and arms are visible to the front camera, then move your arms. The character mirrors you.</p>
+  <button id="startBtn">Start camera</button>
+  <button id="demoBtn" class="secondary">Demo without camera</button>
+  <div id="err"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ------------------------------------------------------------------ *
+ *  Scene
+ * ------------------------------------------------------------------ */
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x101820);
+scene.fog = new THREE.Fog(0x101820, 6, 14);
+
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 50);
+
+scene.add(new THREE.HemisphereLight(0xbfdcff, 0x203040, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(2, 4, 3);
+scene.add(sun);
+
+const floor = new THREE.Mesh(
+  new THREE.CircleGeometry(3, 48),
+  new THREE.MeshStandardMaterial({ color: 0x1e2c3a, roughness: 0.9 })
+);
+floor.rotation.x = -Math.PI / 2;
+scene.add(floor);
+const ring = new THREE.Mesh(
+  new THREE.RingGeometry(0.55, 0.6, 48),
+  new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide })
+);
+ring.rotation.x = -Math.PI / 2; ring.position.y = 0.005;
+scene.add(ring);
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  // make sure a ~2.6 wide x 2.1 tall region around the avatar always fits (portrait phones need to back off)
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  const distH = (2.1 / 2) / Math.tan(fov / 2);
+  const distW = (2.6 / 2) / (Math.tan(fov / 2) * camera.aspect);
+  const dist = Math.max(distH, distW);
+  camera.position.set(0, 1.05, dist);
+  camera.lookAt(0, 0.95, 0);
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ------------------------------------------------------------------ *
+ *  Avatar (faces +Z, i.e. towards the viewer; its right arm is on screen-left, like a mirror)
+ * ------------------------------------------------------------------ */
+const SHOULDER_Y = 1.42, SHOULDER_X = 0.23;
+const UPPER = 0.32, FORE = 0.30;          // arm segment lengths
+const skin = new THREE.MeshStandardMaterial({ color: 0xf2c6a0, roughness: 0.7 });
+const shirt = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.6 });
+const pants = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
+const dark = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 });
+
+function mesh(geo, mat, x = 0, y = 0, z = 0) { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); return m; }
+
+const avatar = new THREE.Group();
+scene.add(avatar);
+
+// torso, pelvis, neck, head, face
+avatar.add(mesh(new THREE.CapsuleGeometry(0.2, 0.34, 6, 16), shirt, 0, 1.18, 0).rotateZ(0)); // chest
+avatar.children[0].scale.set(1.15, 1, 0.75);
+avatar.add(mesh(new THREE.CylinderGeometry(0.2, 0.19, 0.2, 16), pants, 0, 0.84, 0));
+avatar.add(mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.1, 12), skin, 0, 1.52, 0));
+const head = mesh(new THREE.SphereGeometry(0.14, 24, 18), skin, 0, 1.68, 0);
+head.add(mesh(new THREE.SphereGeometry(0.022, 10, 8), dark, -0.05, 0.02, 0.125));
+head.add(mesh(new THREE.SphereGeometry(0.022, 10, 8), dark, 0.05, 0.02, 0.125));
+const smile = mesh(new THREE.TorusGeometry(0.04, 0.008, 6, 14, Math.PI), dark, 0, -0.04, 0.128);
+smile.rotation.z = Math.PI;
+head.add(smile);
+avatar.add(head);
+// legs
+for (const sx of [-1, 1]) {
+  avatar.add(mesh(new THREE.CapsuleGeometry(0.075, 0.62, 6, 12), pants, sx * 0.1, 0.42, 0));
+  avatar.add(mesh(new THREE.BoxGeometry(0.13, 0.07, 0.22), dark, sx * 0.1, 0.035, 0.04));
+}
+
+// arm: a group whose local -Y axis runs along the limb
+function makeLimb(len, radius, mat, tip) {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.CapsuleGeometry(radius, len - radius * 2, 6, 12), mat, 0, -len / 2, 0));
+  if (tip) g.add(mesh(new THREE.SphereGeometry(tip, 14, 12), skin, 0, -len, 0));
+  avatar.add(g);
+  return g;
+}
+function makeArm(side) {   // side: -1 = avatar's right (screen-left), +1 = avatar's left
+  return {
+    sx: side * SHOULDER_X,
+    upper: makeLimb(UPPER, 0.052, shirt),
+    fore: makeLimb(FORE, 0.045, skin, 0.06),
+    dUpper: new THREE.Vector3(side * 0.15, -1, 0).normalize(),   // smoothed directions
+    dFore:  new THREE.Vector3(side * 0.10, -1, 0).normalize(),
+    tUpper: new THREE.Vector3(), tFore: new THREE.Vector3(),
+  };
+}
+const rightArm = makeArm(-1);  // follows the user's RIGHT arm (MediaPipe landmarks 12/14/16)
+const leftArm  = makeArm(+1);  // follows the user's LEFT arm  (11/13/15)
+
+const DOWN = new THREE.Vector3(0, -1, 0);
+const _q = new THREE.Quaternion();
+function poseArm(arm) {
+  arm.dUpper.lerp(arm.tUpper, 0.45).normalize();
+  arm.dFore.lerp(arm.tFore, 0.45).normalize();
+  arm.upper.position.set(arm.sx, SHOULDER_Y, 0);
+  arm.upper.quaternion.copy(_q.setFromUnitVectors(DOWN, arm.dUpper));
+  arm.fore.position.set(arm.sx, SHOULDER_Y, 0).addScaledVector(arm.dUpper, UPPER);
+  arm.fore.quaternion.copy(_q.setFromUnitVectors(DOWN, arm.dFore));
+}
+function setRest(arm, side) {
+  arm.tUpper.set(side * 0.15, -1, 0).normalize();
+  arm.tFore.set(side * 0.10, -1, 0).normalize();
+}
+setRest(rightArm, -1); setRest(leftArm, +1);
+
+/* ------------------------------------------------------------------ *
+ *  Landmarks -> arm directions
+ *  MediaPipe world coords: x → image right, y ↓, z → away from camera (metres, origin at hips).
+ *  Camera image is un-mirrored, so the user's right arm has smaller x; our avatar faces the viewer,
+ *  so its right arm is also at -x. Mapping is therefore (x, -y, -z).
+ * ------------------------------------------------------------------ */
+const V = (p) => new THREE.Vector3(p.x, -p.y, -p.z);
+const MIN_VIS = 0.45;
+function updateArmFromPose(arm, side, world, lm, iS, iE, iW) {
+  const vis = Math.min(lm[iS].visibility ?? 1, lm[iE].visibility ?? 1, lm[iW].visibility ?? 1);
+  if (vis < MIN_VIS) { setRest(arm, side); return; }  // arm out of view: relax it
+  const S = V(world[iS]), E = V(world[iE]), W = V(world[iW]);
+  const d1 = E.sub(S), d2 = W.sub(E);
+  if (d1.lengthSq() < 1e-6 || d2.lengthSq() < 1e-6) return;
+  arm.tUpper.copy(d1).normalize();
+  arm.tFore.copy(d2).normalize();
+}
+
+/* ------------------------------------------------------------------ *
+ *  Demo mode (no camera): waves the arms around
+ * ------------------------------------------------------------------ */
+let demo = false;
+function demoPose(t) {
+  const a = Math.sin(t * 1.6), b = Math.sin(t * 1.6 + 1.2);
+  // right arm: raised and waving; left arm: sweeping out to the side
+  rightArm.tUpper.set(-0.9, 0.5 + 0.2 * a, 0.1).normalize();
+  rightArm.tFore.set(-0.2 + 0.6 * a, 1, 0.1).normalize();
+  leftArm.tUpper.set(0.4 + 0.5 * b, -0.2 + 0.8 * b, 0.2).normalize();
+  leftArm.tFore.set(0.5 + 0.5 * b, 0.1 + 0.6 * b, 0.3).normalize();
+}
+
+/* ------------------------------------------------------------------ *
+ *  Camera + MediaPipe pose tracking
+ * ------------------------------------------------------------------ */
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status'), errEl = $('err'), menu = $('menu');
+const video = $('video'), overlay = $('overlay'), preview = $('preview');
+const octx = overlay.getContext('2d');
+function setStatus(text, cls = 'ok') { statusEl.textContent = text; statusEl.className = cls; }
+
+let landmarker = null;
+let tracking = false;
+let lastVideoTime = -1;
+let lastSeen = 0;
+
+async function startTracking() {
+  $('startBtn').disabled = true; $('demoBtn').disabled = true;
+  errEl.textContent = '';
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Camera API unavailable. Open this page over HTTPS (or localhost).');
+    }
+    setStatus('Requesting camera…', 'warn');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    preview.style.display = 'block';
+
+    setStatus('Loading pose model…', 'warn');
+    const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+    const fileset = await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    const modelPath = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+    const make = (delegate) => vision.PoseLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: modelPath, delegate },
+      runningMode: 'VIDEO', numPoses: 1,
+      minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+    });
+    try { landmarker = await make('GPU'); } catch (e) { console.warn('GPU delegate failed, using CPU', e); landmarker = await make('CPU'); }
+
+    tracking = true;
+    menu.style.display = 'none';
+    setStatus('Looking for you…', 'warn');
+  } catch (e) {
+    console.error(e);
+    errEl.textContent = (e && e.message) ? e.message : String(e);
+    setStatus('Error', 'warn');
+    $('startBtn').disabled = false; $('demoBtn').disabled = false;
+  }
+}
+
+const OVERLAY_LINES = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24]];
+function drawOverlay(lm) {
+  const w = overlay.width = video.videoWidth || 320, h = overlay.height = video.videoHeight || 240;
+  octx.clearRect(0, 0, w, h);
+  if (!lm) return;
+  octx.lineWidth = Math.max(2, w / 120); octx.strokeStyle = '#4ade80'; octx.fillStyle = '#fbbf24';
+  for (const [a, b] of OVERLAY_LINES) {
+    octx.beginPath(); octx.moveTo(lm[a].x * w, lm[a].y * h); octx.lineTo(lm[b].x * w, lm[b].y * h); octx.stroke();
+  }
+  for (const i of [11,12,13,14,15,16]) { octx.beginPath(); octx.arc(lm[i].x * w, lm[i].y * h, octx.lineWidth * 1.4, 0, 7); octx.fill(); }
+}
+
+function detect(now) {
+  if (!tracking || video.readyState < 2 || video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
+  const res = landmarker.detectForVideo(video, now);
+  if (res.landmarks && res.landmarks.length && res.worldLandmarks.length) {
+    const lm = res.landmarks[0], world = res.worldLandmarks[0];
+    updateArmFromPose(rightArm, -1, world, lm, 12, 14, 16);
+    updateArmFromPose(leftArm, +1, world, lm, 11, 13, 15);
+    drawOverlay(lm);
+    lastSeen = now;
+    setStatus('Tracking', 'ok');
+  } else {
+    drawOverlay(null);
+    if (now - lastSeen > 1000) {            // lost you for a second: relax arms
+      setRest(rightArm, -1); setRest(leftArm, +1);
+      setStatus('No person visible', 'warn');
+    }
+  }
+}
+
+$('startBtn').addEventListener('click', startTracking);
+$('demoBtn').addEventListener('click', () => { demo = true; menu.style.display = 'none'; setStatus('Demo mode', 'ok'); });
+
+/* ------------------------------------------------------------------ *
+ *  Main loop
+ * ------------------------------------------------------------------ */
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (demo) demoPose(now / 1000);
+  else detect(now);
+  poseArm(rightArm); poseArm(leftArm);
+  // gentle idle sway of the head
+  head.rotation.y = Math.sin(now / 1200) * 0.08;
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+// handy for debugging / future game logic
+window.__game = { scene, avatar, rightArm, leftArm };
+</script>
+</body>
+</html>
