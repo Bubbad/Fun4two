@@ -38,6 +38,8 @@
   #wake { position: fixed; left: 50%; top: max(14px, env(safe-area-inset-top)); font-size: 56px; display: none; pointer-events: none;
     transform: translateX(-50%) scale(var(--s, 1)); transform-origin: top center; transition: transform .3s;
     filter: drop-shadow(0 0 14px rgba(255,200,60,.9)); }
+  #version { position: fixed; right: 10px; bottom: max(8px, env(safe-area-inset-bottom)); font-size: 12px; opacity: .6;
+    pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.6); z-index: 5; }
   #err { color: #fca5a5; font-size: 14px; max-width: 420px; min-height: 1em; }
 </style>
 </head>
@@ -45,6 +47,7 @@
 <canvas id="scene"></canvas>
 
 <div id="preview"><video id="video" playsinline muted autoplay></video><canvas id="overlay"></canvas></div>
+<div id="version">v10</div>
 <div id="wake">☀️</div>
 <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
 <div id="status" class="warn">Not started</div>
