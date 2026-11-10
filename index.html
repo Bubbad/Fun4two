@@ -64,8 +64,9 @@ import * as THREE from 'three';
  *  Scene
  * ------------------------------------------------------------------ */
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+let pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);   // lowered automatically if the phone struggles
+renderer.setPixelRatio(pixelRatio);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8fd3ff);
@@ -80,7 +81,7 @@ scene.add(sun);
 
 const floor = new THREE.Mesh(
   new THREE.CircleGeometry(12, 48),
-  new THREE.MeshStandardMaterial({ color: 0x7ed07e, roughness: 0.9 })
+  new THREE.MeshLambertMaterial({ color: 0x7ed07e })
 );
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
@@ -112,10 +113,10 @@ resize();
  * ------------------------------------------------------------------ */
 const SHOULDER_Y = 1.42, SHOULDER_X = 0.23;
 const UPPER = 0.32, FORE = 0.30;          // arm segment lengths
-const skin = new THREE.MeshStandardMaterial({ color: 0xf2c6a0, roughness: 0.7 });
-const shirt = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.6 });
-const pants = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
-const dark = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 });
+const skin = new THREE.MeshLambertMaterial({ color: 0xf2c6a0 });
+const shirt = new THREE.MeshLambertMaterial({ color: 0x38bdf8 });
+const pants = new THREE.MeshLambertMaterial({ color: 0x334155 });
+const dark = new THREE.MeshLambertMaterial({ color: 0x111111 });
 
 function mesh(geo, mat, x = 0, y = 0, z = 0) { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); return m; }
 
@@ -141,7 +142,7 @@ for (const sx of [-1, 1]) {
 }
 
 // little wings (they flap when you flap!)
-const wingMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 });
+const wingMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
 const wings = [-1, 1].map((side) => {
   const g = new THREE.Group(); g.position.set(side * 0.08, 1.3, -0.16);
   const m = mesh(new THREE.SphereGeometry(1, 14, 10), wingMat, side * 0.2, 0.05, 0); m.scale.set(0.22, 0.09, 0.12);
@@ -171,9 +172,9 @@ const leftArm  = makeArm(+1);  // follows the user's LEFT arm  (11/13/15)
 
 const DOWN = new THREE.Vector3(0, -1, 0);
 const _q = new THREE.Quaternion();
-function poseArm(arm) {
-  arm.dUpper.lerp(arm.tUpper, 0.45).normalize();
-  arm.dFore.lerp(arm.tFore, 0.45).normalize();
+function poseArm(arm, k) {
+  arm.dUpper.lerp(arm.tUpper, k).normalize();
+  arm.dFore.lerp(arm.tFore, k).normalize();
   arm.upper.position.set(arm.sx, SHOULDER_Y, 0);
   arm.upper.quaternion.copy(_q.setFromUnitVectors(DOWN, arm.dUpper));
   arm.fore.position.set(arm.sx, SHOULDER_Y, 0).addScaledVector(arm.dUpper, UPPER);
@@ -246,7 +247,7 @@ async function startTracking() {
     }
     setStatus('Requesting camera…', 'warn');
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false
+      video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 30 } }, audio: false
     });
     video.srcObject = stream;
     await video.play();
@@ -276,7 +277,8 @@ async function startTracking() {
 
 const OVERLAY_LINES = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24]];
 function drawOverlay(lm) {
-  const w = overlay.width = video.videoWidth || 320, h = overlay.height = video.videoHeight || 240;
+  const w = video.videoWidth || 320, h = video.videoHeight || 240;
+  if (overlay.width !== w || overlay.height !== h) { overlay.width = w; overlay.height = h; }
   octx.clearRect(0, 0, w, h);
   if (!lm) return;
   octx.lineWidth = Math.max(2, w / 120); octx.strokeStyle = '#4ade80'; octx.fillStyle = '#fbbf24';
@@ -286,9 +288,10 @@ function drawOverlay(lm) {
   for (const i of [11,12,13,14,15,16]) { octx.beginPath(); octx.arc(lm[i].x * w, lm[i].y * h, octx.lineWidth * 1.4, 0, 7); octx.fill(); }
 }
 
+let lastDetect = 0;
 function detect(now) {
-  if (!tracking || video.readyState < 2 || video.currentTime === lastVideoTime) return;
-  lastVideoTime = video.currentTime;
+  if (!tracking || video.readyState < 2 || video.currentTime === lastVideoTime || now - lastDetect < 50) return;
+  lastVideoTime = video.currentTime; lastDetect = now;
   const res = landmarker.detectForVideo(video, now);
   if (res.landmarks && res.landmarks.length && res.worldLandmarks.length) {
     const lm = res.landmarks[0], world = res.worldLandmarks[0];
@@ -352,12 +355,17 @@ function burst(pos, color, n = 18, speed = 1.4) {
     pCol.set([white ? 1 : c.r, white ? 1 : c.g, white ? 1 : c.b], i * 3);
     pLife[i] = 0.7 + Math.random() * 0.5;
   }
+  sparkAlive = 1;
 }
+let sparkAlive = 0;
 function updateSparkles(dt) {
+  if (!sparkAlive) return;
+  sparkAlive = 0;
   for (let i = 0; i < NP; i++) {
     if (pLife[i] <= 0) continue;
     pLife[i] -= dt;
     if (pLife[i] <= 0) { pPos[i * 3 + 1] = -100; continue; }
+    sparkAlive++;
     pVel[i * 3 + 1] -= 1.2 * dt;
     for (let a = 0; a < 3; a++) pPos[i * 3 + a] += pVel[i * 3 + a] * dt;
   }
@@ -378,8 +386,8 @@ function spawnBubble() {
   const withAnimal = Math.random() < 0.5 && bubbles.filter((x) => x.animal).length < 2;
   const r = withAnimal ? 0.3 : 0.2 + Math.random() * 0.08;
   const color = PASTELS[Math.floor(Math.random() * PASTELS.length)];
-  const m = new THREE.Mesh(bubbleGeo, new THREE.MeshStandardMaterial({
-    color, emissive: color, emissiveIntensity: 0.25, roughness: 0.15, transparent: true, opacity: 0.0 }));
+  const m = new THREE.Mesh(bubbleGeo, new THREE.MeshLambertMaterial({
+    color, emissive: color, emissiveIntensity: 0.25, transparent: true, opacity: 0.0 }));
   const base = new THREE.Vector3(side * (0.2 + Math.random() * 0.4),
                                  SHOULDER_Y - 0.1 + Math.random() * 0.6 + avatar.position.y, 0.05 + Math.random() * 0.2);
   m.position.copy(base);
@@ -468,7 +476,7 @@ function updateFlight(dt) {
 const ANIMALS = ['duck', 'pig', 'cow', 'cat'];
 const SPH = new THREE.SphereGeometry(1, 16, 12), CONE = new THREE.ConeGeometry(1, 1, 12), CYL = new THREE.CylinderGeometry(1, 1, 1, 10);
 const matCache = {};
-const M = (c) => matCache[c] || (matCache[c] = new THREE.MeshStandardMaterial({ color: c, roughness: 0.7 }));
+const M = (c) => matCache[c] || (matCache[c] = new THREE.MeshLambertMaterial({ color: c }));
 function part(geo, color, sx, sy, sz, x, y, z, rx = 0, rz = 0) {
   const m = new THREE.Mesh(geo, M(color)); m.scale.set(sx, sy, sz); m.position.set(x, y, z); m.rotation.set(rx, 0, rz); return m;
 }
@@ -577,15 +585,15 @@ canvas.addEventListener('pointerdown', (e) => {
 /* ------------------------------------------------------------------ *
  *  Clouds
  * ------------------------------------------------------------------ */
-const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+const cloudMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
 const clouds = [];
-for (let i = 0; i < 10; i++) {
+for (let i = 0; i < 6; i++) {
   const g = new THREE.Group();
-  for (let k = 0; k < 4; k++) {
+  for (let k = 0; k < 3; k++) {
     const s = mesh(new THREE.SphereGeometry(0.3 + Math.random() * 0.25, 12, 10), cloudMat, k * 0.4 - 0.6, Math.random() * 0.15, Math.random() * 0.2);
     g.add(s);
   }
-  g.position.set(-6 + Math.random() * 12, 1.2 + i * 0.55, -2.5 - Math.random() * 4);
+  g.position.set(-6 + Math.random() * 12, 1.2 + i * 0.9, -2.5 - Math.random() * 4);
   g.scale.setScalar(0.65);
   g.userData.speed = 0.08 + Math.random() * 0.15;
   scene.add(g); clouds.push(g);
@@ -600,7 +608,8 @@ function frame(now) {
   const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000)); last = now;
   if (demo) demoPose(now / 1000);
   else detect(now);
-  poseArm(rightArm); poseArm(leftArm);
+  const k = 1 - Math.exp(-dt * 25);
+  poseArm(rightArm, k); poseArm(leftArm, k);
   const dy = updateFlight(dt);
   updateBubbles(dt, dy);
   updateSparkles(dt);
@@ -611,7 +620,11 @@ function frame(now) {
   camera.position.set(0, 1.05 + flyH * 0.6, camDist);
   camera.lookAt(0, 0.95 + flyH * 0.6, 0);
   renderer.render(scene, camera);
+  // if the phone can't keep ~40fps, render at lower resolution
+  slowT += (dt > 0.025 ? dt : 0) ; fastT += dt;
+  if (fastT > 2) { if (slowT / fastT > 0.5 && pixelRatio > 1) { pixelRatio = Math.max(1, pixelRatio - 0.25); renderer.setPixelRatio(pixelRatio); resize(); } slowT = fastT = 0; }
 }
+let slowT = 0, fastT = 0;
 requestAnimationFrame(frame);
 
 // handy for debugging / future game logic
