@@ -1,10 +1,10 @@
-# Fun4Two – Mirror Avatar
+# Fun4two
 
 A tiny 3D game for toddlers where **your own body is the controller**. Point the phone's front camera at your child, and a cartoon avatar on a farm mirrors their arm movements. Pop bubbles, free animals, and watch the day turn into night.
 
 The whole game is a single file, [`index.html`](index.html). No build step, no install, no app store.
 
-| Day (with the 5-star rainbow surprise) | Night (with fireworks) |
+| Day | Night |
 |---|---|
 | ![Day](docs/day.png) | ![Night](docs/night.png) |
 
@@ -35,7 +35,7 @@ There is also a **Demo without camera** button that makes the avatar wave on its
 
 ### Stars and celebrations
 Every pop or catch lights one of five stars at the bottom. The fifth star sets off a celebration:
-- **During the day:** a rainbow grows over the farm, balloons float up, confetti rains and all the animals party.
+- **During the day:** a rainbow grows over the farm, confetti rains and all the animals party.
 - **At night:** five fireworks shoot up and burst, each lighting up the whole sky.
 
 ### Sunset and night (about 10s + 30s)

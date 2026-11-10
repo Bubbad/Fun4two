@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#101820">
-<title>Fun4Two – Mirror Avatar</title>
+<title>Fun4two</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -47,13 +47,13 @@
 <canvas id="scene"></canvas>
 
 <div id="preview"><video id="video" playsinline muted autoplay></video><canvas id="overlay"></canvas></div>
-<div id="version">v11</div>
+<div id="version">v12</div>
 <div id="wake">☀️</div>
 <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
 <div id="status" class="warn">Not started</div>
 
 <div id="menu">
-  <h1>Mirror Avatar</h1>
+  <h1>Fun4two</h1>
   <p>Stand back so your head, shoulders and arms are visible to the front camera. Pop the bubbles with your hands and wave to make the animals dance!</p>
   <button id="startBtn">Start camera</button>
   <button id="demoBtn" class="secondary">Demo without camera</button>
@@ -663,7 +663,7 @@ for (let i = 0; i < 6; i++) {
 }
 
 /* ------------------------------------------------------------------ *
- *  5-star celebrations: fireworks at night, rainbow + balloons + confetti by day
+ *  5-star celebrations: fireworks at night, rainbow + confetti by day
  * ------------------------------------------------------------------ */
 let skyFlash = 0, partyT = 0;
 const flashCol = new THREE.Color(0xffffff);
@@ -749,7 +749,7 @@ function updateFireworks(dt) {
   fGeo.attributes.position.needsUpdate = true; fGeo.attributes.color.needsUpdate = true;
 }
 
-// daytime surprise: a rainbow grows over the farm, balloons float up, confetti rains and the animals party
+// daytime surprise: a rainbow grows over the farm, confetti rains and the animals party
 const RAINBOW = [0xff4d4d, 0xff9f40, 0xffe14d, 0x5bd65b, 0x4da6ff, 0x6b5bff, 0xb25bff];
 let rainbow = null;
 function startRainbow() {
@@ -763,18 +763,6 @@ function startRainbow() {
   g.position.set(0, 0, -12); g.scale.y = 0.01; scene.add(g);
   rainbow = { g, mats, t: 0 };
 }
-const balloons = [];
-function startBalloons() {
-  for (let i = 0; i < 6; i++) {
-    const col = PASTELS[i % PASTELS.length], g = new THREE.Group();
-    g.add(part(SPH, col, 0.17, 0.21, 0.17, 0, 0, 0));
-    g.add(part(CONE, col, 0.03, 0.05, 0.03, 0, -0.22, 0, Math.PI));
-    g.add(part(CYL, 0x555555, 0.004, 0.3, 0.004, 0, -0.4, 0));
-    const x0 = -1.3 + i * 0.52 + (Math.random() - 0.5) * 0.2;
-    g.position.set(x0, 0.3, -2 + Math.random() * 1.4); scene.add(g);
-    balloons.push({ g, x0, vy: 0.8 + Math.random() * 0.5, ph: Math.random() * 6.28, t: -i * 0.15 });
-  }
-}
 let confettiT = 0;
 function updateDayFX(dt) {
   if (rainbow) {
@@ -784,12 +772,6 @@ function updateDayFX(dt) {
     const op = r.t > 5 ? Math.max(0, 1 - (r.t - 5)) : 1;
     r.mats.forEach((m) => { m.opacity = op; });
     if (r.t > 6) { scene.remove(r.g); r.g.children.forEach((m) => { m.geometry.dispose(); m.material.dispose(); }); rainbow = null; }
-  }
-  for (const b of [...balloons]) {
-    b.t += dt; if (b.t < 0) { b.g.visible = false; continue; } b.g.visible = true;
-    b.g.position.y += b.vy * dt; b.g.position.x = b.x0 + Math.sin(b.t * 1.5 + b.ph) * 0.1;
-    b.g.rotation.z = Math.sin(b.t * 1.5 + b.ph) * 0.12;
-    if (b.g.position.y > 7) { scene.remove(b.g); balloons.splice(balloons.indexOf(b), 1); }
   }
   if (partyT > 0) {
     confettiT -= dt;
@@ -806,7 +788,7 @@ function celebrate() {
     const halfW = dist * tanH * camera.aspect * 0.8, top = Math.min(5.2, 0.95 + dist * tanH - 0.5), lo = 2.4;
     [0, 0.5, 1.0, 1.5, 2.1].forEach((d) => fwQueue.push({ t: d, x: (Math.random() * 2 - 1) * halfW, ty: lo + Math.random() * Math.max(0, top - lo) }));
   } else {                                                    // day: surprise!
-    startRainbow(); startBalloons(); partyT = 5;
+    startRainbow(); partyT = 5;
   }
 }
 function updateFX(dt) { updateFireworks(dt); updateDayFX(dt); }
