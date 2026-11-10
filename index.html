@@ -576,23 +576,23 @@ function fp(geo, color, sx, sy, sz, x, y, z, rx = 0, ry = 0, rz = 0) {
 fp(CYL, 0xcfd8dc, 0.3, 1.8, 0.3, -2.3, 0.9, -5.9);
 fp(SPH, 0x90a4ae, 0.3, 0.25, 0.3, -2.3, 1.8, -5.9);
 // round hay bales
-fp(CYL, 0xe9c46a, 0.25, 0.32, 0.25, 0.9, 0.25, -3.6, Math.PI / 2);
-fp(CYL, 0xe9c46a, 0.25, 0.32, 0.25, 1.35, 0.25, -3.9, Math.PI / 2);
-fp(CYL, 0xd9b45a, 0.25, 0.32, 0.25, 1.12, 0.7, -3.75, Math.PI / 2);
+fp(CYL, 0xe9c46a, 0.25, 0.32, 0.25, 1.6, 0.25, -3.6, Math.PI / 2);
+fp(CYL, 0xe9c46a, 0.25, 0.32, 0.25, 2.05, 0.25, -3.9, Math.PI / 2);
+fp(CYL, 0xd9b45a, 0.25, 0.32, 0.25, 1.82, 0.7, -3.75, Math.PI / 2);
 // fence
 for (let x = -4.2; x <= 4.3; x += 0.7) fp(BOX, 0xf5f0e6, 0.05, 0.45, 0.05, x, 0.225, -3);
 fp(BOX, 0xf5f0e6, 8.6, 0.04, 0.03, 0, 0.2, -3);
 fp(BOX, 0xf5f0e6, 8.6, 0.04, 0.03, 0, 0.38, -3);
 // trees
-for (const [x, z, sc] of [[1.7, -5.2, 1.2], [2.8, -7.2, 1.4], [-3.4, -6.8, 1.3], [3.8, -9.5, 1.5], [-4.4, -9.5, 1.5], [0.4, -9.5, 1.2]]) {
+for (const [x, z, sc] of [[2.5, -4.8, 1.2], [3.4, -8, 1.4], [-3.4, -6.8, 1.3], [3.8, -9.5, 1.5], [-4.4, -9.5, 1.5], [0.4, -9.5, 1.2]]) {
   fp(CYL, 0x8d5a2b, 0.07 * sc, 0.55 * sc, 0.07 * sc, x, 0.275 * sc, z);
   fp(SPH, 0x3f9e4d, 0.42 * sc, 0.42 * sc, 0.42 * sc, x, 0.85 * sc, z);
   fp(SPH, 0x57b95f, 0.3 * sc, 0.3 * sc, 0.3 * sc, x, 1.2 * sc, z);
 }
 // windmill (blades turn)
-fp(new THREE.CylinderGeometry(0.12, 0.2, 1.6, 8), 0xf5f0e6, 1, 1, 1, 2.3, 0.8, -7.5);
-fp(CONE, 0xc0392b, 0.17, 0.3, 0.17, 2.3, 1.75, -7.5);
-const blades = new THREE.Group(); blades.position.set(2.3, 1.55, -7.25); farm.add(blades);
+fp(new THREE.CylinderGeometry(0.14, 0.24, 2.2, 8), 0xf5f0e6, 1, 1, 1, 1.15, 1.1, -6.5);
+fp(CONE, 0xc0392b, 0.2, 0.35, 0.2, 1.15, 2.37, -6.5);
+const blades = new THREE.Group(); blades.position.set(1.15, 2.1, -6.22); farm.add(blades);
 for (let i = 0; i < 4; i++) {
   const b = part(BOX, 0xffffff, 0.09, 0.75, 0.02, 0, 0, 0); b.geometry = BOX;
   const arm = new THREE.Group(); arm.rotation.z = i * Math.PI / 2; b.position.y = 0.4; arm.add(b); blades.add(arm);
