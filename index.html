@@ -47,7 +47,7 @@
 
 <div id="menu">
   <h1>Mirror Avatar</h1>
-  <p>Stand back so your head, shoulders and arms are visible to the front camera. Pop the bubbles with your hands and flap your arms to fly!</p>
+  <p>Stand back so your head, shoulders and arms are visible to the front camera. Pop the bubbles with your hands and wave to make the animals dance!</p>
   <button id="startBtn">Start camera</button>
   <button id="demoBtn" class="secondary">Demo without camera</button>
   <div id="err"></div>
@@ -141,14 +141,6 @@ for (const sx of [-1, 1]) {
   avatar.add(mesh(new THREE.BoxGeometry(0.13, 0.07, 0.22), dark, sx * 0.1, 0.035, 0.04));
 }
 
-// little wings (they flap when you flap!)
-const wingMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-const wings = [-1, 1].map((side) => {
-  const g = new THREE.Group(); g.position.set(side * 0.08, 1.3, -0.16);
-  const m = mesh(new THREE.SphereGeometry(1, 14, 10), wingMat, side * 0.2, 0.05, 0); m.scale.set(0.22, 0.09, 0.12);
-  g.add(m); avatar.add(g); g.userData.side = side; return g;
-});
-
 // arm: a group whose local -Y axis runs along the limb
 function makeLimb(len, radius, mat, tip) {
   const g = new THREE.Group();
@@ -208,20 +200,12 @@ function updateArmFromPose(arm, side, world, lm, iS, iE, iW) {
  *  Demo mode (no camera): waves the arms around
  * ------------------------------------------------------------------ */
 let demo = false;
-function demoPose(t) {
-  if (Math.floor(t / 8) % 2 === 0) {          // flap both arms
-    const f = Math.sin(t * 7);
-    for (const [arm, sd] of [[rightArm, -1], [leftArm, 1]]) {
-      arm.tUpper.set(sd, 0.9 * f, 0).normalize();
-      arm.tFore.set(sd, 0.9 * f, 0).normalize();
-    }
-  } else {                                     // sweep arms around to pop bubbles
-    const a = Math.sin(t * 2.2), b = Math.sin(t * 2.2 + 1.5);
-    rightArm.tUpper.set(-0.7, 0.6 * a, 0.3).normalize();
-    rightArm.tFore.set(-0.5, 0.8 * a + 0.3, 0.4).normalize();
-    leftArm.tUpper.set(0.7, 0.6 * b, 0.3).normalize();
-    leftArm.tFore.set(0.5, 0.8 * b + 0.3, 0.4).normalize();
-  }
+function demoPose(t) {                         // sweep arms around to pop bubbles
+  const a = Math.sin(t * 2.2), b = Math.sin(t * 2.2 + 1.5);
+  rightArm.tUpper.set(-0.7, 0.6 * a, 0.3).normalize();
+  rightArm.tFore.set(-0.5, 0.8 * a + 0.3, 0.4).normalize();
+  leftArm.tUpper.set(0.7, 0.6 * b, 0.3).normalize();
+  leftArm.tFore.set(0.5, 0.8 * b + 0.3, 0.4).normalize();
 }
 
 /* ------------------------------------------------------------------ *
@@ -389,7 +373,7 @@ function spawnBubble() {
   const m = new THREE.Mesh(bubbleGeo, new THREE.MeshLambertMaterial({
     color, emissive: color, emissiveIntensity: 0.25, transparent: true, opacity: 0.0 }));
   const base = new THREE.Vector3(side * (0.2 + Math.random() * 0.4),
-                                 SHOULDER_Y - 0.1 + Math.random() * 0.6 + avatar.position.y, 0.05 + Math.random() * 0.2);
+                                 SHOULDER_Y - 0.1 + Math.random() * 0.6, 0.05 + Math.random() * 0.2);
   m.position.copy(base);
   scene.add(m);
   let animal = null;
@@ -406,21 +390,21 @@ function addStar() {
   starEls.forEach((el, i) => el.classList.toggle('on', i < starCount));
   if (starCount >= starEls.length) {                    // 5 pops = party!
     celebrateSound();
-    burst(new THREE.Vector3(0, 1.4 + avatar.position.y, 0.3), 0xffd23f, 90, 2.6);
-    burst(new THREE.Vector3(0, 1.4 + avatar.position.y, 0.3), 0xff9ec7, 60, 2.2);
+    burst(new THREE.Vector3(0, 1.4, 0.3), 0xffd23f, 90, 2.6);
+    burst(new THREE.Vector3(0, 1.4, 0.3), 0xff9ec7, 60, 2.2);
     setTimeout(() => { starCount = 0; starEls.forEach((el) => el.classList.remove('on')); }, 900);
   }
 }
 
 const _h = new THREE.Vector3();
 function handWorld(arm, out) {
-  return out.copy(arm.fore.position).addScaledVector(arm.dFore, FORE).add(avatar.position);
+  return out.copy(arm.fore.position).addScaledVector(arm.dFore, FORE);
 }
-function updateBubbles(dt, dyAvatar) {
+function updateBubbles(dt) {
   spawnTimer -= dt;
   if (spawnTimer <= 0 && bubbles.length < MAX_BUBBLES) { spawnBubble(); spawnTimer = 0.6 + Math.random() * 0.8; }
   for (const b of [...bubbles]) {
-    b.age += dt; b.base.y += dyAvatar + 0.02 * dt;             // follow the avatar as it flies, drift up slowly
+    b.age += dt; b.base.y += 0.02 * dt;                          // drift up slowly
     const fade = Math.min(b.age / 0.5, 1) * Math.min((b.life - b.age) / 1.0, 1);
     b.m.material.opacity = 0.65 * Math.max(fade, 0);
     b.m.position.set(b.base.x + Math.sin(b.age * 1.3 + b.phase) * 0.03, b.base.y + Math.sin(b.age * 1.7 + b.phase) * 0.03, b.base.z);
@@ -445,29 +429,14 @@ function updateBubbles(dt, dyAvatar) {
 }
 
 /* ------------------------------------------------------------------ *
- *  Flying: flap both arms up and down to rise, stop to float back down
+ *  Wave detection (drives the animals' dance)
  * ------------------------------------------------------------------ */
-let flyH = 0, energy = 0, waveE = 0, prevHandY = null, prevR = null, prevL = null, wingPhase = 0;
+let waveE = 0, prevR = null, prevL = null;
 const armHandY = (a) => a.dUpper.y * UPPER + a.dFore.y * FORE;     // hand height relative to the shoulder
-function updateFlight(dt) {
-  const avg = (armHandY(rightArm) + armHandY(leftArm)) / 2;
-  if (prevHandY !== null) {
-    const vel = Math.abs(avg - prevHandY) / dt;
-    energy += (vel - energy) * Math.min(1, dt * 3);
-  }
-  prevHandY = avg;
+function updateWave(dt) {
   const rY = armHandY(rightArm), lY = armHandY(leftArm);
   if (prevR !== null) waveE += ((Math.abs(rY - prevR) + Math.abs(lY - prevL)) / 2 / dt - waveE) * Math.min(1, dt * 3);
   prevR = rY; prevL = lY;
-  const flap = THREE.MathUtils.clamp((energy - 0.3) / 1.0, 0, 1);
-  const target = flap * 2.6;
-  const before = flyH;
-  flyH += (target - flyH) * Math.min(1, dt * (target > flyH ? 2.2 : 1.0));
-  avatar.position.y = flyH;
-  wingPhase += dt * (6 + 10 * flap);
-  const amp = 0.15 + 0.7 * flap;
-  for (const w of wings) w.rotation.z = w.userData.side * (0.3 + Math.sin(wingPhase) * amp);
-  return flyH - before;
 }
 
 /* ------------------------------------------------------------------ *
@@ -610,15 +579,15 @@ function frame(now) {
   else detect(now);
   const k = 1 - Math.exp(-dt * 25);
   poseArm(rightArm, k); poseArm(leftArm, k);
-  const dy = updateFlight(dt);
-  updateBubbles(dt, dy);
+  updateWave(dt);
+  updateBubbles(dt);
   updateSparkles(dt);
   updateMeadow(dt, now / 1000);
   for (const c of clouds) { c.position.x += c.userData.speed * dt; if (c.position.x > 7) c.position.x = -7; }
   // gentle idle sway of the head + camera follows the avatar up
   head.rotation.y = Math.sin(now / 1200) * 0.08;
-  camera.position.set(0, 1.05 + flyH * 0.6, camDist);
-  camera.lookAt(0, 0.95 + flyH * 0.6, 0);
+  camera.position.set(0, 1.05, camDist);
+  camera.lookAt(0, 0.95, 0);
   renderer.render(scene, camera);
   // if the phone can't keep ~40fps, render at lower resolution
   slowT += (dt > 0.025 ? dt : 0) ; fastT += dt;
