@@ -375,7 +375,8 @@ let spawnTimer = 0.3;
 
 function spawnBubble() {
   const side = Math.random() < 0.5 ? -1 : 1;
-  const r = 0.2 + Math.random() * 0.08;
+  const withAnimal = Math.random() < 0.5 && bubbles.filter((x) => x.animal).length < 2;
+  const r = withAnimal ? 0.3 : 0.2 + Math.random() * 0.08;
   const color = PASTELS[Math.floor(Math.random() * PASTELS.length)];
   const m = new THREE.Mesh(bubbleGeo, new THREE.MeshStandardMaterial({
     color, emissive: color, emissiveIntensity: 0.25, roughness: 0.15, transparent: true, opacity: 0.0 }));
@@ -383,9 +384,11 @@ function spawnBubble() {
                                  SHOULDER_Y - 0.1 + Math.random() * 0.6 + avatar.position.y, 0.05 + Math.random() * 0.2);
   m.position.copy(base);
   scene.add(m);
-  bubbles.push({ m, base, r, color, age: 0, life: 10 + Math.random() * 4, phase: Math.random() * 6.28 });
+  let animal = null;
+  if (withAnimal) { animal = makeAnimal(ANIMALS[Math.floor(Math.random() * ANIMALS.length)]); scene.add(animal); }
+  bubbles.push({ m, base, r, color, animal, age: 0, life: 10 + Math.random() * 4, phase: Math.random() * 6.28 });
 }
-function removeBubble(b) { scene.remove(b.m); b.m.material.dispose(); bubbles.splice(bubbles.indexOf(b), 1); }
+function removeBubble(b) { if (b.animal) scene.remove(b.animal); scene.remove(b.m); b.m.material.dispose(); bubbles.splice(bubbles.indexOf(b), 1); }
 
 const starEls = [...document.querySelectorAll('#stars span')];
 let starCount = 0;
@@ -414,11 +417,20 @@ function updateBubbles(dt, dyAvatar) {
     b.m.material.opacity = 0.65 * Math.max(fade, 0);
     b.m.position.set(b.base.x + Math.sin(b.age * 1.3 + b.phase) * 0.03, b.base.y + Math.sin(b.age * 1.7 + b.phase) * 0.03, b.base.z);
     b.m.scale.setScalar(b.r * (1 + 0.04 * Math.sin(b.age * 5 + b.phase)));
+    if (b.animal) {                                           // animal rides inside the bubble
+      b.animal.position.set(b.m.position.x, b.m.position.y - 0.15, b.m.position.z);
+      b.animal.rotation.y = Math.sin(b.age * 1.5) * 0.6;
+      b.animal.scale.setScalar(0.5 * Math.max(fade, 0.01));
+    }
     if (b.age > b.life) { removeBubble(b); continue; }
     if (b.age < 0.4) continue;
     for (const arm of [rightArm, leftArm]) {
       if (handWorld(arm, _h).distanceTo(b.m.position) < b.r + 0.1) {
-        popSound(); burst(b.m.position, b.color); addStar(); removeBubble(b); break;
+        const pos = b.m.position.clone(), an = b.animal;
+        popSound(); burst(pos, b.color); addStar();
+        b.animal = null; removeBubble(b);
+        if (an) freeAnimal(an, pos);
+        break;
       }
     }
   }
@@ -427,7 +439,7 @@ function updateBubbles(dt, dyAvatar) {
 /* ------------------------------------------------------------------ *
  *  Flying: flap both arms up and down to rise, stop to float back down
  * ------------------------------------------------------------------ */
-let flyH = 0, energy = 0, prevHandY = null, wingPhase = 0;
+let flyH = 0, energy = 0, waveE = 0, prevHandY = null, prevR = null, prevL = null, wingPhase = 0;
 const armHandY = (a) => a.dUpper.y * UPPER + a.dFore.y * FORE;     // hand height relative to the shoulder
 function updateFlight(dt) {
   const avg = (armHandY(rightArm) + armHandY(leftArm)) / 2;
@@ -436,6 +448,9 @@ function updateFlight(dt) {
     energy += (vel - energy) * Math.min(1, dt * 3);
   }
   prevHandY = avg;
+  const rY = armHandY(rightArm), lY = armHandY(leftArm);
+  if (prevR !== null) waveE += ((Math.abs(rY - prevR) + Math.abs(lY - prevL)) / 2 / dt - waveE) * Math.min(1, dt * 3);
+  prevR = rY; prevL = lY;
   const flap = THREE.MathUtils.clamp((energy - 0.3) / 1.0, 0, 1);
   const target = flap * 2.6;
   const before = flyH;
@@ -446,6 +461,118 @@ function updateFlight(dt) {
   for (const w of wings) w.rotation.z = w.userData.side * (0.3 + Math.sin(wingPhase) * amp);
   return flyH - before;
 }
+
+/* ------------------------------------------------------------------ *
+ *  Animals: built from simple shapes. Freed from bubbles, they land in the meadow and dance when you wave.
+ * ------------------------------------------------------------------ */
+const ANIMALS = ['duck', 'pig', 'cow', 'cat'];
+const SPH = new THREE.SphereGeometry(1, 16, 12), CONE = new THREE.ConeGeometry(1, 1, 12), CYL = new THREE.CylinderGeometry(1, 1, 1, 10);
+const matCache = {};
+const M = (c) => matCache[c] || (matCache[c] = new THREE.MeshStandardMaterial({ color: c, roughness: 0.7 }));
+function part(geo, color, sx, sy, sz, x, y, z, rx = 0, rz = 0) {
+  const m = new THREE.Mesh(geo, M(color)); m.scale.set(sx, sy, sz); m.position.set(x, y, z); m.rotation.set(rx, 0, rz); return m;
+}
+function makeAnimal(type) {
+  const g = new THREE.Group(); g.userData.type = type;
+  const eyes = (y, z, dx = 0.06) => { for (const sx of [-1, 1]) g.add(part(SPH, 0x111111, 0.028, 0.028, 0.028, sx * dx, y, z)); };
+  const legs = (color, xs, zs, h, r) => { for (const x of xs) for (const z of zs) g.add(part(CYL, color, r, h / 2, r, x, h / 2, z)); };
+  if (type === 'duck') {
+    g.add(part(SPH, 0xffd93d, 0.2, 0.17, 0.24, 0, 0.2, 0));
+    g.add(part(SPH, 0xffd93d, 0.14, 0.14, 0.14, 0, 0.42, 0.14));
+    g.add(part(SPH, 0xff9f1c, 0.07, 0.03, 0.06, 0, 0.4, 0.27));
+    g.add(part(CONE, 0xffd93d, 0.06, 0.12, 0.06, 0, 0.28, -0.24, -1.0));
+    for (const sx of [-1, 1]) g.add(part(SPH, 0xff9f1c, 0.05, 0.015, 0.07, sx * 0.07, 0.015, 0.05));
+    eyes(0.45, 0.125, 0.06);
+  } else if (type === 'pig') {
+    g.add(part(SPH, 0xffa8b8, 0.22, 0.19, 0.27, 0, 0.24, 0));
+    g.add(part(SPH, 0xffa8b8, 0.16, 0.15, 0.15, 0, 0.38, 0.22));
+    g.add(part(CYL, 0xff8fa3, 0.06, 0.03, 0.06, 0, 0.36, 0.35, Math.PI / 2));
+    for (const sx of [-1, 1]) g.add(part(CONE, 0xff8fa3, 0.05, 0.1, 0.03, sx * 0.09, 0.52, 0.19, 0, -sx * 0.5));
+    g.add(part(SPH, 0xff8fa3, 0.04, 0.04, 0.04, 0, 0.27, -0.28));
+    legs(0xff8fa3, [-0.1, 0.1], [-0.12, 0.12], 0.1, 0.04);
+    eyes(0.42, 0.34 - 0.13 + 0.03, 0.065);
+  } else if (type === 'cow') {
+    g.add(part(SPH, 0xffffff, 0.21, 0.2, 0.3, 0, 0.3, 0));
+    for (const [x, y, z, a, b] of [[0.19, 0.34, 0.05, 0.05, 0.1], [-0.19, 0.28, -0.1, 0.05, 0.09], [0.1, 0.46, -0.1, 0.08, 0.05]])
+      g.add(part(SPH, 0x222222, a, b, 0.09, x, y, z));
+    g.add(part(SPH, 0xffffff, 0.15, 0.14, 0.14, 0, 0.45, 0.28));
+    g.add(part(SPH, 0xffb3c1, 0.09, 0.06, 0.06, 0, 0.41, 0.4));
+    for (const sx of [-1, 1]) {
+      g.add(part(CONE, 0xf1e3c0, 0.03, 0.08, 0.03, sx * 0.1, 0.6, 0.26));
+      g.add(part(SPH, 0x222222, 0.06, 0.03, 0.04, sx * 0.17, 0.5, 0.27));
+    }
+    legs(0xffffff, [-0.1, 0.1], [-0.17, 0.17], 0.15, 0.045);
+    eyes(0.49, 0.41, 0.06);
+  } else {   // cat
+    g.add(part(SPH, 0xff9f43, 0.15, 0.15, 0.2, 0, 0.22, 0));
+    g.add(part(SPH, 0xff9f43, 0.13, 0.12, 0.12, 0, 0.42, 0.14));
+    for (const sx of [-1, 1]) g.add(part(CONE, 0xff9f43, 0.05, 0.09, 0.03, sx * 0.07, 0.55, 0.14, 0, -sx * 0.15));
+    g.add(part(CYL, 0xff9f43, 0.025, 0.12, 0.025, 0, 0.32, -0.25, -0.6));
+    g.add(part(SPH, 0xff6b81, 0.02, 0.015, 0.015, 0, 0.4, 0.255));
+    legs(0xff9f43, [-0.07, 0.07], [-0.1, 0.1], 0.1, 0.03);
+    eyes(0.45, 0.245, 0.05);
+  }
+  return g;
+}
+function animalSound(type) {
+  if (type === 'duck') { tone(520, 0.12, 'sawtooth', 0.09, 0, 380); tone(500, 0.12, 'sawtooth', 0.09, 0.16, 360); }
+  else if (type === 'pig') { tone(260, 0.12, 'sawtooth', 0.09, 0, 180); tone(240, 0.14, 'sawtooth', 0.09, 0.15, 150); }
+  else if (type === 'cow') { tone(170, 0.7, 'sawtooth', 0.08, 0, 115); tone(340, 0.7, 'sine', 0.05, 0, 230); }
+  else { tone(700, 0.2, 'triangle', 0.2, 0, 1000); tone(950, 0.3, 'triangle', 0.2, 0.2, 500); }
+}
+
+const SLOTS = [[-0.95, 0.6], [0.95, 0.6], [-0.5, 1.1], [0.5, 1.1], [-1.15, 0.1], [1.15, 0.1], [-0.8, -0.9], [0.8, -0.9]];
+const meadow = [];     // animals living on the grass
+const MEADOW_SCALE = 0.85;
+function freeAnimal(g, from) {
+  let slot = SLOTS.findIndex((_, i) => !meadow.some((a) => a.slot === i));
+  if (slot < 0) {                                         // meadow full: oldest animal leaves
+    const old = meadow.shift(); scene.remove(old.g); slot = old.slot;
+  }
+  const [x, z] = SLOTS[slot];
+  meadow.push({ g, slot, state: 'fall', t: 0, from: from.clone().add(new THREE.Vector3(0, -0.15, 0)), to: new THREE.Vector3(x, 0, z),
+                hop: 0, nextHop: 2 + Math.random() * 3, phase: Math.random() * 6.28 });
+  setTimeout(() => animalSound(g.userData.type), 120);
+}
+function hopAnimal(a, sound) { a.hop = 1; if (sound) animalSound(a.g.userData.type); }
+
+let danceTimer = 0;
+function updateMeadow(dt, time) {
+  const dancing = waveE > 0.6;
+  if (dancing) {
+    if (danceTimer <= 0 && meadow.length) animalSound(meadow[Math.floor(Math.random() * meadow.length)].g.userData.type);
+    danceTimer = 1.5;
+  } else danceTimer = Math.max(0, danceTimer - dt);
+  for (const a of meadow) {
+    const g = a.g;
+    if (a.state === 'fall') {                             // arc from the bubble down to its spot
+      a.t = Math.min(1, a.t + dt / 1.2);
+      const k = a.t, e = k * k * (3 - 2 * k);
+      g.position.set(a.from.x + (a.to.x - a.from.x) * e, a.from.y + (a.to.y - a.from.y) * k + Math.sin(k * Math.PI) * 0.5, a.from.z + (a.to.z - a.from.z) * e);
+      g.scale.setScalar(THREE.MathUtils.lerp(0.5, MEADOW_SCALE, e));
+      g.rotation.y += dt * 8 * (1 - k);
+      if (a.t >= 1) { a.state = 'idle'; hopAnimal(a, false); burst(g.position.clone().add(new THREE.Vector3(0, 0.2, 0)), 0xffffff, 10, 0.8); }
+      continue;
+    }
+    a.nextHop -= dt;
+    if (a.nextHop <= 0) { hopAnimal(a, false); a.nextHop = 2 + Math.random() * 4; }
+    a.hop = Math.max(0, a.hop - dt * 2.2);
+    let y = Math.sin(a.hop * Math.PI) * 0.2, sway = 0;
+    if (danceTimer > 0) { y = Math.max(y, Math.abs(Math.sin(time * 9 + a.phase)) * 0.18); sway = Math.sin(time * 9 + a.phase) * 0.18; }
+    g.position.set(a.to.x, y, a.to.z);
+    g.rotation.set(0, -Math.atan(a.to.x / 4), sway);
+    g.scale.set(MEADOW_SCALE, MEADOW_SCALE * (1 - 0.06 * Math.sin(time * 3 + a.phase)), MEADOW_SCALE);
+  }
+}
+
+// tap an animal on the screen to make it hop and speak
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+canvas.addEventListener('pointerdown', (e) => {
+  ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects(meadow.filter((a) => a.state === 'idle').map((a) => a.g), true)[0];
+  if (hit) { initAudio(); const a = meadow.find((m) => m.g === hit.object.parent); if (a) hopAnimal(a, true); }
+});
 
 /* ------------------------------------------------------------------ *
  *  Clouds
@@ -477,6 +604,7 @@ function frame(now) {
   const dy = updateFlight(dt);
   updateBubbles(dt, dy);
   updateSparkles(dt);
+  updateMeadow(dt, now / 1000);
   for (const c of clouds) { c.position.x += c.userData.speed * dt; if (c.position.x > 7) c.position.x = -7; }
   // gentle idle sway of the head + camera follows the avatar up
   head.rotation.y = Math.sin(now / 1200) * 0.08;
@@ -487,7 +615,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // handy for debugging / future game logic
-window.__game = { scene, avatar, rightArm, leftArm, bubbles };
+window.__game = { scene, avatar, rightArm, leftArm, bubbles, meadow };
 </script>
 </body>
 </html>
